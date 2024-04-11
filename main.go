@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -14,12 +13,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var methods = [...]string{"GET", "POST", "PUT", "DELETE"}
+
 // TODO(reno): enums are confusing, but I should strengthen types on the method
 type model struct {
 	flexbox       *stickers.FlexBox
+	envFlexbox    *stickers.FlexBox
 	url           textinput.Model
 	body          textarea.Model
-	method        string
+	method        int
 	response      viewport.Model
 	r             string
 	activeSection string
@@ -60,11 +62,22 @@ func initialModel() model {
 
 	fb.AddRows([]*stickers.FlexBoxRow{r1, r2, r3})
 
+	envFb := stickers.NewFlexBox(0, 0)
+
+	envR1 := envFb.NewRow().AddCells(
+		[]*stickers.FlexBoxCell{
+			stickers.NewFlexBoxCell(1, 1),
+		},
+	)
+
+	envFb.AddRows([]*stickers.FlexBoxRow{envR1})
+
 	return model{
 		flexbox:       fb,
+		envFlexbox:    envFb,
 		url:           urlInput,
 		body:          bodyInput,
-		method:        "GET",
+		method:        0,
 		response:      resp,
 		r:             "",
 		activeSection: "URL",
@@ -83,11 +96,13 @@ func makeRequest(m model) string {
 	client := &http.Client{}
 	// TODO(reno): body support, it's supposed to be of type io.Reader, not sure
 	// how that works
-	req, err := http.NewRequest(m.method, m.url.Value(), nil)
+	req, err := http.NewRequest(methods[m.method], m.url.Value(), nil)
 	check(err)
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := client.Do(req)
-	check(err)
+	if err != nil {
+		return err.Error()
+	}
 	body := make([]byte, 1000)
 	resp.Body.Read(body)
 	return string(body)
@@ -123,6 +138,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeSection = "BODY"
 			case "3":
 				m.activeSection = "RESPONSE"
+			case "4":
+				m.activeSection = "ENVIRONMENT"
 			case "i":
 				m.editing = true
 				switch m.activeSection {
@@ -137,8 +154,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.r = resp
 			case "ctrl+c", "q":
 				return m, tea.Quit
+			case "j":
+				switch m.activeSection {
+				case "URL":
+					m.method = (m.method + 1) % len(methods)
+				}
+			case "k":
+				switch m.activeSection {
+				case "URL":
+					m.method = (m.method - 1 + len(methods)) % len(methods)
+				}
 			}
 		}
+
 	case tea.WindowSizeMsg:
 		m.flexbox.SetWidth(msg.Width)
 		m.flexbox.SetHeight(msg.Height)
@@ -151,12 +179,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	log.Println(m)
+	// DEBUG: Print out the model. This is sort of useless.
+	// log.Println(m)
+	if m.activeSection == "ENVIRONMENT" {
+		m.envFlexbox.ForceRecalculate()
+
+		m.envFlexbox.Row(0).Cell(0).SetContent("Test envinronments!")
+
+		return m.envFlexbox.Render()
+	}
 
 	m.flexbox.ForceRecalculate()
 
 	// Method/URL on top
-	m.flexbox.Row(0).Cell(0).SetContent(m.method)
+	m.flexbox.Row(0).Cell(0).SetContent(methods[m.method])
 	m.flexbox.Row(0).Cell(1).SetContent(m.url.View())
 
 	// Body/response
