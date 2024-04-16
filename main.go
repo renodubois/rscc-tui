@@ -13,20 +13,25 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var methods = [...]string{"GET", "POST", "PUT", "DELETE"}
-
 // TODO(reno): enums are confusing, but I should strengthen types on the method
+var methods = [...]string{"GET", "POST", "PUT", "DELETE"}
+var bodyTabs = [...]string{"BODY", "HEADERS"}
+
 type model struct {
-	flexbox       *stickers.FlexBox
-	envFlexbox    *stickers.FlexBox
-	url           textinput.Model
-	body          textarea.Model
-	method        int
-	response      viewport.Model
-	r             string
-	activeSection string
-	editing       bool
-	err           string
+	flexbox        *stickers.FlexBox
+	envFlexbox     *stickers.FlexBox
+	url            textinput.Model
+	body           textarea.Model
+	bodyTab        int
+	headers        [][]string
+	headerTable    *stickers.TableSingleType[string]
+	selectedHeader int
+	method         int
+	response       viewport.Model
+	r              string
+	activeSection  string
+	editing        bool
+	err            string
 }
 
 func initialModel() model {
@@ -72,11 +77,20 @@ func initialModel() model {
 
 	envFb.AddRows([]*stickers.FlexBoxRow{envR1})
 
+	headers := [][]string{{"Content-Type", "application/json"}, {"Authorization", "apikey test thing!"}}
+
+	headerTable := stickers.NewTableSingleType[string](0, 0, []string{"Key", "Value"})
+	headerTable.SetRatio([]int{1, 1})
+	headerTable.AddRows(headers)
+
 	return model{
 		flexbox:       fb,
 		envFlexbox:    envFb,
 		url:           urlInput,
 		body:          bodyInput,
+		bodyTab:       0,
+		headers:       headers,
+		headerTable:   headerTable,
 		method:        0,
 		response:      resp,
 		r:             "",
@@ -98,7 +112,11 @@ func makeRequest(m model) string {
 	// how that works
 	req, err := http.NewRequest(methods[m.method], m.url.Value(), nil)
 	check(err)
-	req.Header.Add("Content-Type", "application/json")
+	for _, h := range m.headers {
+		k := h[0]
+		v := h[1]
+		req.Header.Add(k, v)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err.Error()
@@ -158,24 +176,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.activeSection {
 				case "URL":
 					m.method = (m.method + 1) % len(methods)
+				case "BODY":
+					if bodyTabs[m.bodyTab] == "HEADERS" {
+						m.headerTable.CursorDown()
+					}
 				}
 			case "k":
 				switch m.activeSection {
 				case "URL":
 					m.method = (m.method - 1 + len(methods)) % len(methods)
+				case "BODY":
+					if bodyTabs[m.bodyTab] == "HEADERS" {
+						m.headerTable.CursorUp()
+					}
+				}
+
+			case "]":
+				switch m.activeSection {
+				case "BODY":
+					m.bodyTab = (m.bodyTab + 1) % len(bodyTabs)
+				}
+			case "[":
+				switch m.activeSection {
+				case "BODY":
+					m.bodyTab = (m.bodyTab - 1 + len(bodyTabs)) % len(bodyTabs)
 				}
 			}
-		}
 
+			// TODO(reno): Add a second tab to the body section for headers
+			// Also need to figure out a key/value editing system to use for both that and environments
+		}
 	case tea.WindowSizeMsg:
 		m.flexbox.SetWidth(msg.Width)
 		m.flexbox.SetHeight(msg.Height)
-
+		m.headerTable.SetWidth(msg.Width / 2)
+		m.headerTable.SetHeight(msg.Height / 2)
 	}
 
 	m.response, respCmd = m.response.Update(msg)
 
 	return m, tea.Batch(urlCmd, bodyCmd, respCmd)
+}
+
+func PrintHeaders(h map[string]string) string {
+	// finalStr := ""
+	// for k, v := range h {
+	//
+	// }
+	return ""
 }
 
 func (m model) View() string {
@@ -196,7 +244,15 @@ func (m model) View() string {
 	m.flexbox.Row(0).Cell(1).SetContent(m.url.View())
 
 	// Body/response
-	m.flexbox.Row(1).Cell(0).SetContent(m.body.View())
+	bodyContent := ""
+	switch bodyTabs[m.bodyTab] {
+	case "BODY":
+		bodyContent = m.body.View()
+	case "HEADERS":
+		bodyContent = m.headerTable.Render()
+	}
+
+	m.flexbox.Row(1).Cell(0).SetContent(bodyContent)
 	// TODO(reno): Render response in a viewport so we can scroll
 	m.flexbox.Row(1).Cell(1).SetContent(m.r)
 
